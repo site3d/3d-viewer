@@ -628,7 +628,7 @@ export default function PotreeCompare() {
           className={styles.panel}
           style={{ clipPath: `inset(0 0 0 ${(split * 100).toFixed(4)}%)` }}
         >
-          <div className={styles.label}>Правый</div>
+          <div className={`${styles.label} ${styles.labelRight}`}>Правый</div>
           <div
             ref={rightRef}
             className={styles.potreeArea}

@@ -258,6 +258,11 @@
   pointer-events: none;
 }
 
+.labelRight {
+  left: auto;
+  right: 8px;
+}
+
 .potreeArea {
   position: relative;
   height: 100%;
