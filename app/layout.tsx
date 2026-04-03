@@ -13,7 +13,7 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Potree — сравнение облаков точек",
+  title: "3D Viewer",
   description: "Два вьюпорта Potree с синхронизацией камеры",
 };
 
