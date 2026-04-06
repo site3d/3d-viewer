@@ -271,6 +271,18 @@
   overflow: hidden;
 }
 
+.wrap[data-dragging="true"] .potreeArea {
+  pointer-events: none;
+}
+
+.wrap[data-interaction-active="true"][data-active-owner="left"] .rightPanel .potreeArea {
+  pointer-events: none;
+}
+
+.wrap[data-interaction-active="true"][data-active-owner="right"] .leftPanel .potreeArea {
+  pointer-events: none;
+}
+
 .divider {
   position: absolute;
   top: 0;

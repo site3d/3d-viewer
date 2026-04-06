@@ -94,32 +94,6 @@ function copyView(
   to.radius = from.radius;
 }
 
-function viewSnapshot(view: { position: { x: number; y: number; z: number }; yaw: number; pitch: number; radius: number }) {
-  return {
-    x: view.position.x,
-    y: view.position.y,
-    z: view.position.z,
-    yaw: view.yaw,
-    pitch: view.pitch,
-    radius: view.radius,
-  };
-}
-
-function isSameView(
-  a: ReturnType<typeof viewSnapshot>,
-  b: ReturnType<typeof viewSnapshot>,
-  eps = 1e-7,
-) {
-  return (
-    Math.abs(a.x - b.x) < eps &&
-    Math.abs(a.y - b.y) < eps &&
-    Math.abs(a.z - b.z) < eps &&
-    Math.abs(a.yaw - b.yaw) < eps &&
-    Math.abs(a.pitch - b.pitch) < eps &&
-    Math.abs(a.radius - b.radius) < eps
-  );
-}
-
 function applyVisual(
   pc: {
     getAttribute: (n: string) => unknown;
@@ -155,6 +129,8 @@ export default function PotreeCompare() {
 
   const lockedRef = useRef(true);
   const lastTouchedRef = useRef<"left" | "right">("left");
+  const interactionOwnerRef = useRef<"left" | "right" | null>(null);
+  const interactionActiveRef = useRef(false);
 
   const [scriptsReady, setScriptsReady] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -297,23 +273,17 @@ export default function PotreeCompare() {
     };
     applyControls();
 
-    let prevLeft = viewSnapshot(
-      vL.scene.view as unknown as { position: { x: number; y: number; z: number }; yaw: number; pitch: number; radius: number },
-    );
-    let prevRight = viewSnapshot(
-      vR.scene.view as unknown as { position: { x: number; y: number; z: number }; yaw: number; pitch: number; radius: number },
-    );
-
     const syncLoop = () => {
+      if (dragging.current) {
+        syncRafRef.current = window.requestAnimationFrame(syncLoop);
+        return;
+      }
       const leftView = vL.scene.view as Parameters<typeof copyView>[0] & {
         position: { x: number; y: number; z: number };
       };
       const rightView = vR.scene.view as Parameters<typeof copyView>[0] & {
         position: { x: number; y: number; z: number };
       };
-      const currentLeft = viewSnapshot(leftView);
-      const currentRight = viewSnapshot(rightView);
-
       if (lockedRef.current) {
         if (lastTouchedRef.current === "left") {
           copyView(leftView, rightView as Parameters<typeof copyView>[1]);
@@ -321,24 +291,73 @@ export default function PotreeCompare() {
           copyView(rightView, leftView as Parameters<typeof copyView>[1]);
         }
       }
-      prevLeft = viewSnapshot(leftView);
-      prevRight = viewSnapshot(rightView);
       syncRafRef.current = window.requestAnimationFrame(syncLoop);
     };
     syncRafRef.current = window.requestAnimationFrame(syncLoop);
 
-    const markLeftTouched = () => {
-      lastTouchedRef.current = "left";
+    const applyOwnerControls = () => {
+      if (dragging.current) return;
+      if (!interactionActiveRef.current) {
+        vL.controls.enabled = true;
+        vR.controls.enabled = true;
+        return;
+      }
+      if (interactionOwnerRef.current === "left") {
+        vL.controls.enabled = true;
+        vR.controls.enabled = false;
+        return;
+      }
+      if (interactionOwnerRef.current === "right") {
+        vL.controls.enabled = false;
+        vR.controls.enabled = true;
+        return;
+      }
     };
-    const markRightTouched = () => {
-      lastTouchedRef.current = "right";
+
+    const applyInteractionMask = () => {
+      if (!wrapRef.current) return;
+      wrapRef.current.dataset.interactionActive = interactionActiveRef.current ? "true" : "false";
+      wrapRef.current.dataset.activeOwner = interactionOwnerRef.current ?? "none";
     };
-    elL.addEventListener("pointerdown", markLeftTouched, { passive: true });
-    elR.addEventListener("pointerdown", markRightTouched, { passive: true });
-    elL.addEventListener("wheel", markLeftTouched, { passive: true });
-    elR.addEventListener("wheel", markRightTouched, { passive: true });
-    elL.addEventListener("touchstart", markLeftTouched, { passive: true });
-    elR.addEventListener("touchstart", markRightTouched, { passive: true });
+
+    const beginInteraction = (side: "left" | "right") => {
+      if (interactionOwnerRef.current && interactionOwnerRef.current !== side) return;
+      interactionOwnerRef.current = side;
+      interactionActiveRef.current = true;
+      lastTouchedRef.current = side;
+      applyInteractionMask();
+      applyOwnerControls();
+    };
+    const markWheel = (side: "left" | "right") => {
+      if (interactionOwnerRef.current && interactionOwnerRef.current !== side) return;
+      lastTouchedRef.current = side;
+    };
+    const endInteraction = () => {
+      interactionOwnerRef.current = null;
+      interactionActiveRef.current = false;
+      applyInteractionMask();
+      applyOwnerControls();
+    };
+
+    const onLeftPointerDown = () => beginInteraction("left");
+    const onRightPointerDown = () => beginInteraction("right");
+    const onLeftWheel = () => markWheel("left");
+    const onRightWheel = () => markWheel("right");
+    const onLeftTouchStart = () => beginInteraction("left");
+    const onRightTouchStart = () => beginInteraction("right");
+
+    elL.addEventListener("pointerdown", onLeftPointerDown, { passive: true });
+    elR.addEventListener("pointerdown", onRightPointerDown, { passive: true });
+    elL.addEventListener("wheel", onLeftWheel, { passive: true });
+    elR.addEventListener("wheel", onRightWheel, { passive: true });
+    elL.addEventListener("touchstart", onLeftTouchStart, { passive: true });
+    elR.addEventListener("touchstart", onRightTouchStart, { passive: true });
+    window.addEventListener("pointerup", endInteraction, { passive: true });
+    window.addEventListener("mouseup", endInteraction, { passive: true });
+    window.addEventListener("touchend", endInteraction, { passive: true });
+    window.addEventListener("blur", endInteraction, { passive: true });
+
+    applyInteractionMask();
 
     Potree.loadPointCloud(urlLeft, "A", (e) => {
       leftPc = e.pointcloud;
@@ -358,12 +377,16 @@ export default function PotreeCompare() {
         window.cancelAnimationFrame(syncRafRef.current);
         syncRafRef.current = null;
       }
-      elL.removeEventListener("pointerdown", markLeftTouched);
-      elR.removeEventListener("pointerdown", markRightTouched);
-      elL.removeEventListener("wheel", markLeftTouched);
-      elR.removeEventListener("wheel", markRightTouched);
-      elL.removeEventListener("touchstart", markLeftTouched);
-      elR.removeEventListener("touchstart", markRightTouched);
+      elL.removeEventListener("pointerdown", onLeftPointerDown);
+      elR.removeEventListener("pointerdown", onRightPointerDown);
+      elL.removeEventListener("wheel", onLeftWheel);
+      elR.removeEventListener("wheel", onRightWheel);
+      elL.removeEventListener("touchstart", onLeftTouchStart);
+      elR.removeEventListener("touchstart", onRightTouchStart);
+      window.removeEventListener("pointerup", endInteraction);
+      window.removeEventListener("mouseup", endInteraction);
+      window.removeEventListener("touchend", endInteraction);
+      window.removeEventListener("blur", endInteraction);
       vL.renderer.setAnimationLoop(null);
       vR.renderer.setAnimationLoop(null);
       leftViewerRef.current = null;
@@ -427,6 +450,9 @@ export default function PotreeCompare() {
     };
     const onUp = () => {
       dragging.current = false;
+      if (wrapRef.current) {
+        wrapRef.current.dataset.dragging = "false";
+      }
       const vL = leftViewerRef.current;
       const vR = rightViewerRef.current;
       if (vL) vL.controls.enabled = true;
@@ -602,7 +628,7 @@ export default function PotreeCompare() {
 
       <div ref={wrapRef} className={styles.wrap}>
         <div
-          className={styles.panel}
+          className={`${styles.panel} ${styles.leftPanel}`}
           style={{ clipPath: `inset(0 ${((1 - split) * 100).toFixed(4)}% 0 0)` }}
         >
           <div className={styles.label}>Левый</div>
@@ -616,7 +642,11 @@ export default function PotreeCompare() {
           style={{ left: `calc(${(split * 100).toFixed(4)}% - 5px)` }}
           onMouseDown={(e) => {
             e.preventDefault();
+            e.stopPropagation();
             dragging.current = true;
+            if (wrapRef.current) {
+              wrapRef.current.dataset.dragging = "true";
+            }
             const vL = leftViewerRef.current;
             const vR = rightViewerRef.current;
             if (vL) vL.controls.enabled = false;
@@ -625,7 +655,7 @@ export default function PotreeCompare() {
           title="Перетащить"
         />
         <div
-          className={styles.panel}
+          className={`${styles.panel} ${styles.rightPanel}`}
           style={{ clipPath: `inset(0 0 0 ${(split * 100).toFixed(4)}%)` }}
         >
           <div className={`${styles.label} ${styles.labelRight}`}>Правый</div>
